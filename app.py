@@ -1,10 +1,32 @@
 """
-India Macro & Markets Monitor (Streamlit)
+India Macro & Markets Monitor (Full Version)
 
-This app gives a compact view of:
-- Latest economic / policy news with sentiment and impact tags
-- Key macro indicators for India (CPI, IIP, GDP, Unemployment)
-- Equity market watchlist + per-stock analysis
+Features:
+- Dark neon dashboard for:
+    1) 📰 News: Economic & policy feed
+        - India / Global mode (NewsAPI or Google News RSS fallback)
+        - Sentiment tags (Positive / Negative / Neutral)
+        - Impact tags: Inflation, Policy, Markets, Growth, Employment, General
+        - Topic chips: RBI, Inflation, Markets, Budget, Global
+        - Bookmark system (session-based)
+        - Keyword frequency bar chart
+    2) 📊 Macro:
+        - CPI / IIP / GDP / Unemployment
+        - Data from data.gov.in (if env vars set) OR uploaded CSV/XLSX/PDF
+        - Latest snapshot cards
+        - Time-series chart
+        - Change mode: Level / Month-over-Month / Year-over-Year (approx)
+        - Indicator comparison: CPI vs IIP vs GDP (normalized to 100)
+    3) 💹 Markets:
+        - Live index snapshot (Nifty 50, Sensex, S&P 500, NASDAQ)
+        - Watchlist: choose from Nifty & Sensex companies + custom tickers
+        - Watchlist mini cards (1D change)
+        - Correlation heatmap (6M daily returns)
+        - Single-stock deep dive:
+            - Range (1M–3Y), price chart
+            - Moving averages
+            - Risk panel: annualised volatility, max drawdown
+            - Return distribution histogram
 
 Run:
     pip install -r requirements.txt
@@ -53,7 +75,6 @@ except Exception:
 #                     GLOBAL CONFIG & THEME
 # ------------------------------------------------------------------
 
-# Cache HTTP calls
 requests_cache.install_cache("macro_markets_cache", expire_after=180)
 
 st.set_page_config(
@@ -62,11 +83,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Dark UI palette (different from earlier version)
 COLORS = {
     "bg_top": "#020617",
     "bg_bottom": "#020617",
-    "card": "#0B1220",
+    "card": "#020617",
+    "card_inner": "#0B1220",
     "border": "#1D283A",
     "accent": "#F97316",       # orange
     "accent2": "#22D3EE",      # cyan
@@ -97,14 +118,13 @@ MACRO_TTL = 1800
 if "_log" not in st.session_state:
     st.session_state["_log"] = []
 
+if "bookmarks" not in st.session_state:
+    st.session_state["bookmarks"] = []
 
-def log(msg: str) -> None:
-    st.session_state["_log"].append(
-        f"{datetime.utcnow().isoformat(timespec='seconds')} | {msg}"
-    )
+if "news_query" not in st.session_state:
+    st.session_state["news_query"] = "India economy"
 
-
-# --- Global CSS (completely different look) ---
+# --- CSS ---
 st.markdown(
     f"""
 <style>
@@ -117,12 +137,12 @@ h1, h2, h3, h4 {{
     font-weight: 700;
 }}
 .card {{
-    background: {COLORS['card']};
+    background: {COLORS['card_inner']};
     border-radius: 14px;
     padding: 0.9rem 1rem;
     margin-bottom: 0.9rem;
     border: 1px solid {COLORS['border']};
-    box-shadow: 0 14px 30px rgba(15,23,42,0.6);
+    box-shadow: 0 16px 32px rgba(15,23,42,0.7);
 }}
 .small-muted {{
     color: {COLORS['muted']};
@@ -135,6 +155,7 @@ h1, h2, h3, h4 {{
     border:1px solid {COLORS['border']};
     font-size:0.7rem;
     margin-right:4px;
+    margin-bottom:4px;
 }}
 .sent-pill {{
     display:inline-block;
@@ -161,8 +182,90 @@ h1, h2, h3, h4 {{
 )
 
 # ------------------------------------------------------------------
+#                     NIFTY / SENSEX TICKERS
+# ------------------------------------------------------------------
+
+PRESET_TICKERS_FALLBACK = {
+    "Reliance Industries (NIFTY, SENSEX)": "RELIANCE.NS",
+    "HDFC Bank (NIFTY, SENSEX)": "HDFCBANK.NS",
+    "ICICI Bank (NIFTY, SENSEX)": "ICICIBANK.NS",
+    "State Bank of India (NIFTY, SENSEX)": "SBIN.NS",
+    "Infosys (NIFTY)": "INFY.NS",
+    "TCS (NIFTY, SENSEX)": "TCS.NS",
+    "Bharti Airtel (NIFTY, SENSEX)": "BHARTIARTL.NS",
+    "ITC (NIFTY, SENSEX)": "ITC.NS",
+    "Larsen & Toubro (NIFTY, SENSEX)": "LT.NS",
+    "Axis Bank (NIFTY, SENSEX)": "AXISBANK.NS",
+    "Kotak Mahindra Bank (NIFTY, SENSEX)": "KOTAKBANK.NS",
+    "Hindustan Unilever (NIFTY, SENSEX)": "HINDUNILVR.NS",
+    "Maruti Suzuki (NIFTY, SENSEX)": "MARUTI.NS",
+    "Mahindra & Mahindra (NIFTY, SENSEX)": "M&M.NS",
+    "UltraTech Cement (NIFTY, SENSEX)": "ULTRACEMCO.NS",
+    "Sun Pharma (NIFTY, SENSEX)": "SUNPHARMA.NS",
+    "Power Grid (NIFTY, SENSEX)": "POWERGRID.NS",
+    "NTPC (NIFTY, SENSEX)": "NTPC.NS",
+    "Asian Paints (NIFTY, SENSEX)": "ASIANPAINT.NS",
+    "Bajaj Finance (NIFTY, SENSEX)": "BAJFINANCE.NS",
+    "Titan (NIFTY, SENSEX)": "TITAN.NS",
+    "Nestle India (NIFTY, SENSEX)": "NESTLEIND.NS",
+    "JSW Steel (NIFTY, SENSEX)": "JSWSTEEL.NS",
+    "Tata Motors (NIFTY)": "TATAMOTORS.NS",
+    "Tata Steel (NIFTY)": "TATASTEEL.NS",
+    "Wipro (NIFTY)": "WIPRO.NS",
+    "HCL Tech (NIFTY)": "HCLTECH.NS",
+    "Adani Ports (NIFTY)": "ADANIPORTS.NS",
+    "Adani Enterprises (NIFTY)": "ADANIENT.NS",
+    "Coal India (NIFTY)": "COALINDIA.NS",
+    "ONGC (NIFTY)": "ONGC.NS",
+    "Britannia (NIFTY)": "BRITANNIA.NS",
+    "SBI Life (NIFTY)": "SBILIFE.NS",
+    "HDFC Life (NIFTY)": "HDFCLIFE.NS",
+    "Grasim (NIFTY)": "GRASIM.NS",
+    "Tech Mahindra (NIFTY)": "TECHM.NS",
+    "Tata Consumer (NIFTY)": "TATACONSUM.NS",
+    "Bajaj Finserv (NIFTY)": "BAJAJFINSV.NS",
+}
+
+TICKERS_CSV_PATH = "indian_index_tickers.csv"
+
+
+@st.cache_data
+def load_preset_tickers() -> dict:
+    """
+    Load full Nifty/Sensex list from CSV if available, else fallback dict.
+
+    CSV format:
+        name,symbol,index
+        Reliance Industries,RELIANCE.NS,NIFTY;SENSEX
+        HDFC Bank,HDFCBANK.NS,NIFTY;SENSEX
+        ...
+    """
+    if os.path.exists(TICKERS_CSV_PATH):
+        try:
+            df = pd.read_csv(TICKERS_CSV_PATH)
+            df = df.dropna(subset=["name", "symbol"])
+            mapping: Dict[str, str] = {}
+            for _, row in df.iterrows():
+                label = str(row["name"]).strip()
+                idx = str(row.get("index", "")).strip()
+                if idx:
+                    label = f"{label} ({idx})"
+                mapping[label] = str(row["symbol"]).strip()
+            return mapping
+        except Exception as e:
+            st.warning(f"Could not read {TICKERS_CSV_PATH}, using fallback list. Error: {e}")
+            return PRESET_TICKERS_FALLBACK
+    return PRESET_TICKERS_FALLBACK
+
+
+# ------------------------------------------------------------------
 #                         GENERIC HELPERS
 # ------------------------------------------------------------------
+
+def log(msg: str) -> None:
+    st.session_state["_log"].append(
+        f"{datetime.utcnow().isoformat(timespec='seconds')} | {msg}"
+    )
 
 
 def safe_json_get(url: str, params: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
@@ -214,7 +317,6 @@ def read_table_or_text(uploaded):
 #                     SENTIMENT & IMPACT TAGS
 # ------------------------------------------------------------------
 
-
 def get_sentiment(text: str) -> Tuple[str, float]:
     try:
         tb = TextBlob(text or "")
@@ -232,7 +334,7 @@ def get_sentiment(text: str) -> Tuple[str, float]:
 IMPACT_KEYWORDS = {
     "Inflation": ["inflation", "cpi", "price rise", "wpi"],
     "Policy": ["rbi", "repo rate", "policy", "budget", "regulation"],
-    "Markets": ["sensex", "nifty", "stocks", "equity", "market"],
+    "Markets": ["sensex", "nifty", "stocks", "equity", "markets"],
     "Growth": ["gdp", "growth", "expansion", "output"],
     "Employment": ["jobs", "unemployment", "employment"],
 }
@@ -352,9 +454,28 @@ def load_headlines(
 def news_tab(headline_count: int):
     st.subheader("📰 Economic & policy news")
 
+    # Quick topic chips
+    st.markdown("**Quick topics:**", unsafe_allow_html=True)
+    chip_cols = st.columns(5)
+    topics = [
+        ("RBI", "RBI monetary policy India"),
+        ("Inflation", "India CPI inflation"),
+        ("Markets", "Indian stock markets Nifty Sensex"),
+        ("Budget", "India Union Budget"),
+        ("Global", "global economy"),
+    ]
+    for (label, q), col in zip(topics, chip_cols):
+        if col.button(label):
+            st.session_state["news_query"] = q
+
     c1, c2 = st.columns([2, 1])
     with c1:
-        query = st.text_input("Search / topic", value="India economy")
+        query = st.text_input(
+            "Search / topic",
+            value=st.session_state["news_query"],
+            key="news_query_input",
+        )
+        st.session_state["news_query"] = query
     with c2:
         country_mode = st.selectbox("Feed region", ["India", "Global"])
 
@@ -413,29 +534,48 @@ def news_tab(headline_count: int):
         wanted = label_map[sentiment_filter]
         headlines = [h for h in headlines if h["sent_label"] == wanted]
 
-    # trending keywords (simple)
+    # trending keywords
     keywords = []
     for h in headlines:
         for w in (h["title"] or "").split():
             w = "".join(ch for ch in w.lower() if ch.isalpha())
             if len(w) > 4:
                 keywords.append(w)
-    common = Counter(keywords).most_common(8)
+    common = Counter(keywords).most_common(10)
 
-    left, right = st.columns([3, 1])
+    left, right = st.columns([3, 2])
 
+    # Right: keyword bar chart + bookmarks
     with right:
         st.markdown("#### 🔍 Frequent words")
-        if not common:
-            st.caption("–")
+        if common:
+            kw_df = pd.DataFrame(common, columns=["word", "count"])
+            fig_kw = px.bar(
+                kw_df,
+                x="word",
+                y="count",
+                title="Top headline words",
+            )
+            fig_kw.update_layout(
+                template="plotly_dark",
+                height=300,
+                margin=dict(l=40, r=10, t=40, b=40),
+            )
+            st.plotly_chart(fig_kw, use_container_width=True)
         else:
-            for w, freq in common:
-                st.markdown(f"<span class='chip'>{w} · {freq}</span>", unsafe_allow_html=True)
+            st.caption("–")
+
         st.markdown("---")
-        st.markdown("#### Impact tags legend")
-        for tag in IMPACT_KEYWORDS.keys():
-            st.markdown(f"- {tag}")
-        st.markdown("- General")
+        st.markdown("#### ⭐ Bookmarks (this session)")
+        if not st.session_state["bookmarks"]:
+            st.caption("No bookmarked articles yet.")
+        else:
+            for b in st.session_state["bookmarks"]:
+                st.markdown(
+                    f"- [{b['title']}]({b['url']})  \n"
+                    f"  <span class='small-muted'>{b.get('source','')} · {fmt_ts(b.get('published'))}</span>",
+                    unsafe_allow_html=True,
+                )
 
     with left:
         # breaking banner
@@ -456,7 +596,7 @@ def news_tab(headline_count: int):
             unsafe_allow_html=True,
         )
 
-        for art in headlines:
+        for i, art in enumerate(headlines):
             label = art["sent_label"]
             score = art["sent_score"]
             if label == "positive":
@@ -467,7 +607,6 @@ def news_tab(headline_count: int):
                 bc = COLORS["neu"]
 
             sent_html = f"<span class='sent-pill' style='background:{bc};'>{label.upper()}</span>"
-
             tags_html = " ".join(
                 f"<span class='chip'>{t}</span>" for t in art["impact"]
             )
@@ -496,6 +635,16 @@ def news_tab(headline_count: int):
                 """,
                 unsafe_allow_html=True,
             )
+
+            if st.button("⭐ Bookmark", key=f"bookmark_{i}"):
+                st.session_state["bookmarks"].append(
+                    {
+                        "title": art["title"],
+                        "url": art["url"],
+                        "source": art.get("source"),
+                        "published": art.get("published"),
+                    }
+                )
 
 
 # ------------------------------------------------------------------
@@ -564,6 +713,42 @@ def latest_value(df: pd.DataFrame | None) -> Tuple[Any, Any]:
         return None, None
 
 
+def compute_change_series(
+    df: pd.DataFrame, mode: str
+) -> Tuple[pd.DataFrame, str, str]:
+    """
+    Return (df_with_change, x_col, y_col) for plotting, based on change mode:
+    - 'Level' → raw value
+    - 'MoM %' → month-over-month percentage change
+    - 'YoY %' → year-over-year percentage change (approx 12-period lag)
+    """
+    date_col, val_col = detect_date_value_cols(df)
+    tmp = df.copy()
+    tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
+    tmp[val_col] = pd.to_numeric(tmp[val_col], errors="coerce")
+    tmp = tmp.dropna(subset=[date_col, val_col]).sort_values(date_col)
+
+    if mode == "Level":
+        return tmp[[date_col, val_col]].copy(), date_col, val_col
+
+    tmp = tmp.set_index(date_col).sort_index()
+    if mode == "MoM %":
+        ser = tmp[val_col].pct_change() * 100
+        out = ser.dropna().reset_index()
+        out.columns = [date_col, "MoM_change"]
+        return out, date_col, "MoM_change"
+
+    if mode == "YoY %":
+        # assume monthly-ish frequency, 12-period lag
+        ser = tmp[val_col].pct_change(periods=12) * 100
+        out = ser.dropna().reset_index()
+        out.columns = [date_col, "YoY_change"]
+        return out, date_col, "YoY_change"
+
+    # fallback
+    return tmp[[date_col, val_col]].copy(), date_col, val_col
+
+
 def macro_tab():
     st.subheader("📊 India macro indicators")
 
@@ -612,7 +797,7 @@ def macro_tab():
         ("Unemployment (uploaded)", "👷", None, None),
     ]
     for col, (label, icon, val, dt) in zip(cards, snap_items):
-        if isinstance(val, (int, float)):
+        if isinstance(val, (int, float, np.floating)):
             try:
                 disp = f"{float(val):.1f}"
             except Exception:
@@ -634,11 +819,27 @@ def macro_tab():
 
     st.markdown("---")
 
-    # Detailed panel – choose indicator from selectbox
-    indicator = st.selectbox(
-        "Select indicator", ["CPI", "IIP", "GDP", "Unemployment"]
-    )
+    # Detailed panel – indicator selector + change mode
+    top_cols = st.columns([2, 2, 2])
+    with top_cols[0]:
+        indicator = st.selectbox(
+            "Indicator",
+            ["CPI", "IIP", "GDP", "Unemployment"],
+        )
+    with top_cols[1]:
+        change_mode = st.selectbox(
+            "Display mode",
+            ["Level", "MoM %", "YoY %"],
+            index=0,
+        )
+    with top_cols[2]:
+        st.caption("Indicator comparison (normalized index)")
+        compare_option = st.selectbox(
+            "Compare",
+            ["None", "CPI vs IIP", "CPI vs GDP", "IIP vs GDP"],
+        )
 
+    # Main indicator
     if indicator == "CPI":
         df = cpi_df
         desc = "Consumer Price Index (price-level changes)"
@@ -660,26 +861,85 @@ def macro_tab():
             st.text_area("Unemployment PDF preview", unemp_up[:2500])
         else:
             st.info("No structured data available for this indicator yet.")
-        return
+    else:
+        try:
+            series_df, x_col, y_col = compute_change_series(df, change_mode)
+            fig = px.line(
+                series_df,
+                x=x_col,
+                y=y_col,
+                markers=True,
+                title=f"{indicator} – {change_mode}",
+            )
+            fig.update_layout(template="plotly_dark", height=420)
+            st.plotly_chart(fig, use_container_width=True)
 
-    date_col, val_col = detect_date_value_cols(df)
-    temp = df.copy()
-    temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
-    temp = temp.dropna(subset=[date_col, val_col]).sort_values(date_col)
+            st.caption(f"Detected columns → date: `{x_col}` · value: `{y_col}`")
 
-    fig = px.line(
-        temp,
-        x=date_col,
-        y=val_col,
-        markers=True,
-        title=f"{indicator} over time",
-    )
-    fig.update_layout(template="plotly_dark", height=420)
-    st.plotly_chart(fig, use_container_width=True)
+            with st.expander("Raw data preview"):
+                st.dataframe(series_df.tail(20))
+        except Exception as e:
+            st.warning(f"Could not plot time-series: {e}")
 
-    st.caption(f"Detected columns → date: `{date_col}` · value: `{val_col}`")
-    with st.expander("Raw data preview"):
-        st.dataframe(temp[[date_col, val_col]].tail(20))
+    st.markdown("---")
+
+    # Comparison chart: normalized index = 100
+    if compare_option != "None":
+        mapping = {
+            "CPI": cpi_df,
+            "IIP": iip_df,
+            "GDP": gdp_df,
+        }
+        if compare_option == "CPI vs IIP":
+            a, b = "CPI", "IIP"
+        elif compare_option == "CPI vs GDP":
+            a, b = "CPI", "GDP"
+        else:
+            a, b = "IIP", "GDP"
+
+        df_a = mapping.get(a)
+        df_b = mapping.get(b)
+
+        if df_a is None or df_b is None:
+            st.info("Not enough data available for comparison.")
+        else:
+            try:
+                da = df_a.copy()
+                db = df_b.copy()
+                ac, av = detect_date_value_cols(da)
+                bc, bv = detect_date_value_cols(db)
+
+                da[ac] = pd.to_datetime(da[ac], errors="coerce")
+                da[av] = pd.to_numeric(da[av], errors="coerce")
+                da = da.dropna(subset=[ac, av]).sort_values(ac)
+
+                db[bc] = pd.to_datetime(db[bc], errors="coerce")
+                db[bv] = pd.to_numeric(db[bv], errors="coerce")
+                db = db.dropna(subset=[bc, bv]).sort_values(bc)
+
+                da = da.set_index(ac)
+                db = db.set_index(bc)
+
+                joined = da[[av]].join(db[[bv]], how="inner", lsuffix=f"_{a}", rsuffix=f"_{b}")
+                joined = joined.dropna()
+
+                base_a = joined[av].iloc[0]
+                base_b = joined[bv].iloc[0]
+                joined[f"{a}_idx"] = joined[av] / base_a * 100
+                joined[f"{b}_idx"] = joined[bv] / base_b * 100
+
+                plot_df = joined[[f"{a}_idx", f"{b}_idx"]].reset_index().rename(columns={joined.index.name or "index": "date"})
+
+                fig_cmp = px.line(
+                    plot_df,
+                    x="date",
+                    y=[f"{a}_idx", f"{b}_idx"],
+                    title=f"{a} vs {b} (normalized to 100)",
+                )
+                fig_cmp.update_layout(template="plotly_dark", height=420)
+                st.plotly_chart(fig_cmp, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not compute comparison chart: {e}")
 
 
 # ------------------------------------------------------------------
@@ -748,49 +1008,107 @@ def stock_tab(default_symbol: str):
 
     st.subheader("💹 Watchlist & single-stock view")
 
-    # Watchlist input
-    raw_list = st.text_input(
-        "Watchlist (comma-separated tickers)",
-        value=f"{default_symbol}, TCS.NS, HDFCBANK.NS",
-    )
-    symbols = [s.strip() for s in raw_list.split(",") if s.strip()]
+    preset_map = load_preset_tickers()
 
-    # grid of small cards
-    if symbols:
-        scols = st.columns(min(len(symbols), 4))
-        for i, sym in enumerate(symbols):
-            col = scols[i % len(scols)]
-            with col:
-                try:
-                    df = yf.download(sym, period="5d", interval="1d", progress=False)
-                    if df.empty:
-                        st.markdown(
-                            f"<div class='card'><div class='small-muted'>{sym}</div><div>no data</div></div>",
-                            unsafe_allow_html=True,
-                        )
-                        continue
-                    df = df.tail(5)
-                    last = df["Close"].iloc[-1]
-                    prev = df["Close"].iloc[-2] if len(df) > 1 else last
-                    pct = (last - prev) / prev * 100 if prev else 0.0
-                    clr = COLORS["pos"] if pct >= 0 else COLORS["neg"]
+    # ------------- Nifty/Sensex picker + extra tickers -------------
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        selected_labels = st.multiselect(
+            "Select from Nifty & Sensex companies",
+            options=sorted(preset_map.keys()),
+            default=[
+                "Reliance Industries (NIFTY, SENSEX)",
+                "HDFC Bank (NIFTY, SENSEX)",
+                "ICICI Bank (NIFTY, SENSEX)",
+            ],
+        )
+        preset_symbols = [preset_map[l] for l in selected_labels] if selected_labels else []
+    with c2:
+        extra_raw = st.text_input(
+            "Any extra tickers? (comma-separated, e.g. INFY.NS, AAPL, TSLA)",
+            value=default_symbol,
+        )
+        extra_syms = [s.strip() for s in extra_raw.split(",") if s.strip()]
+
+    watchlist_symbols = sorted(set(preset_symbols + extra_syms))
+
+    if not watchlist_symbols:
+        st.info("Select at least one company from the list or add a manual ticker above.")
+        return
+
+    # ------------- Mini watchlist cards (1D change) -------------
+    st.markdown("#### 🔭 Watchlist snapshot")
+    cols = st.columns(min(len(watchlist_symbols), 4))
+
+    for i, sym in enumerate(watchlist_symbols):
+        col = cols[i % len(cols)]
+        with col:
+            try:
+                df = yf.download(sym, period="5d", interval="1d", progress=False)
+                if df.empty:
                     st.markdown(
-                        f"""
-                        <div class='card'>
-                          <div class='small-muted'>{sym}</div>
-                          <div style='font-size:1.3rem; font-weight:600;'>{last:,.2f}</div>
-                          <div style='color:{clr}; font-size:0.8rem; font-weight:600;'>{pct:+.2f}% (1D)</div>
-                        </div>
-                        """,
+                        f"<div class='card'><div class='small-muted'>{sym}</div><div>no data</div></div>",
                         unsafe_allow_html=True,
                     )
-                except Exception as e:
-                    log(f"watchlist error {sym}: {e}")
+                    continue
+                df = df.tail(5)
+                last = df["Close"].iloc[-1]
+                prev = df["Close"].iloc[-2] if len(df) > 1 else last
+                pct = (last - prev) / prev * 100 if prev else 0.0
+                clr = COLORS["pos"] if pct >= 0 else COLORS["neg"]
+                st.markdown(
+                    f"""
+                    <div class='card'>
+                      <div class='small-muted'>{sym}</div>
+                      <div style='font-size:1.3rem; font-weight:600;'>{last:,.2f}</div>
+                      <div style='color:{clr}; font-size:0.8rem; font-weight:600;'>{pct:+.2f}% (1D)</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            except Exception as e:
+                log(f"watchlist error {sym}: {e}")
 
     st.markdown("---")
 
-    # Single stock deep dive
-    symbol = st.text_input("Single symbol for detailed view", value=default_symbol)
+    # ------------- Correlation heatmap on watchlist -------------
+    if len(watchlist_symbols) >= 2:
+        st.markdown("#### 🔗 Correlation heatmap (daily returns)")
+        try:
+            price_df = yf.download(
+                watchlist_symbols,
+                period="6mo",
+                interval="1d",
+                progress=False,
+            )["Close"]
+            price_df = price_df.dropna(how="all")
+            returns = price_df.pct_change().dropna()
+            corr = returns.corr()
+
+            fig_corr = px.imshow(
+                corr,
+                text_auto=".2f",
+                color_continuous_scale="RdBu_r",
+                zmin=-1,
+                zmax=1,
+                title="Correlation of daily returns (6M)",
+            )
+            fig_corr.update_layout(template="plotly_dark", height=420)
+            st.plotly_chart(fig_corr, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Could not compute correlation heatmap: {e}")
+
+    st.markdown("---")
+
+    # ------------- Single stock deep dive (use one from watchlist) -------------
+    st.subheader("🔍 Single-stock analysis")
+
+    default_choice = watchlist_symbols[0] if watchlist_symbols else default_symbol
+    symbol = st.selectbox(
+        "Choose symbol for detailed view",
+        options=watchlist_symbols,
+        index=watchlist_symbols.index(default_choice) if default_choice in watchlist_symbols else 0,
+    )
 
     range_map = {
         "1M": ("1mo", "1d"),
@@ -813,10 +1131,6 @@ def stock_tab(default_symbol: str):
 
     selected = st.session_state["stock_range"]
     period, interval = range_map[selected]
-
-    if not symbol:
-        st.info("Enter a ticker symbol to view detailed data.")
-        return
 
     with st.spinner(f"Fetching {symbol}..."):
         data = yf.download(symbol, period=period, interval=interval, progress=False)
@@ -843,16 +1157,9 @@ def stock_tab(default_symbol: str):
 
     st.caption(f"Last bar: {last['Date']} | Range: {selected}")
 
-    # price chart
+    # Price chart
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=data["Date"],
-            y=data["Close"],
-            mode="lines",
-            name="Close",
-        )
-    )
+    fig.add_trace(go.Scatter(x=data["Date"], y=data["Close"], mode="lines", name="Close"))
     fig.update_layout(
         title=f"{symbol} – price ({selected})",
         template="plotly_dark",
@@ -862,8 +1169,8 @@ def stock_tab(default_symbol: str):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # moving averages
-    st.markdown("### Moving averages")
+    # Moving averages + basic risk metrics
+    st.markdown("### Moving averages & risk")
     data["MA20"] = data["Close"].rolling(window=20).mean()
     data["MA50"] = data["Close"].rolling(window=50).mean()
 
@@ -871,24 +1178,41 @@ def stock_tab(default_symbol: str):
     show50 = st.checkbox("Show 50-period MA", value=False)
 
     fig_ma = go.Figure()
-    fig_ma.add_trace(
-        go.Scatter(x=data["Date"], y=data["Close"], mode="lines", name="Close")
-    )
+    fig_ma.add_trace(go.Scatter(x=data["Date"], y=data["Close"], mode="lines", name="Close"))
     if show20:
-        fig_ma.add_trace(
-            go.Scatter(x=data["Date"], y=data["MA20"], mode="lines", name="MA20")
-        )
+        fig_ma.add_trace(go.Scatter(x=data["Date"], y=data["MA20"], mode="lines", name="MA20"))
     if show50:
-        fig_ma.add_trace(
-            go.Scatter(x=data["Date"], y=data["MA50"], mode="lines", name="MA50")
-        )
-
+        fig_ma.add_trace(go.Scatter(x=data["Date"], y=data["MA50"], mode="lines", name="MA50"))
     fig_ma.update_layout(
         title=f"{symbol} – moving averages",
         template="plotly_dark",
         height=380,
     )
     st.plotly_chart(fig_ma, use_container_width=True)
+
+    # Risk: daily volatility + max drawdown + return histogram
+    st.markdown("### Risk profile (based on selected range)")
+    data["ret"] = data["Close"].pct_change()
+    ret = data["ret"].dropna()
+    if not ret.empty:
+        vol = ret.std() * np.sqrt(252) * 100  # annualised approx
+        cum = (1 + ret).cumprod()
+        peak = cum.cummax()
+        dd = (cum / peak - 1).min() * 100
+
+        r1, r2 = st.columns(2)
+        r1.metric("Annualised volatility", f"{vol:.2f}%")
+        r2.metric("Max drawdown", f"{dd:.2f}%")
+
+        fig_hist = px.histogram(
+            ret * 100,
+            nbins=40,
+            title="Distribution of daily returns (%)",
+        )
+        fig_hist.update_layout(template="plotly_dark", height=350)
+        st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.info("Not enough data points to compute risk metrics.")
 
 
 # ------------------------------------------------------------------
@@ -933,7 +1257,7 @@ def main():
         f"""
         <h1>India Macro & Markets Monitor</h1>
         <div class="small-muted">
-          Compact dashboard for economic news, macro indicators and equity markets.
+          Dark dashboard for economic news, macro indicators and equity markets.
         </div>
         """,
         unsafe_allow_html=True,
