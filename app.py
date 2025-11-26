@@ -11,12 +11,12 @@ Features:
         - Bookmark system (session-based)
         - Keyword frequency bar chart
     2) 📊 Macro:
-        - CPI / IIP / GDP / Unemployment
-        - Data from data.gov.in (if env vars set) OR uploaded CSV/XLSX/PDF
+        - CPI / Manufacturing (IIP proxy) / GDP / Unemployment
+        - Data from World Bank by default (no key) OR uploaded CSV/XLSX
         - Latest snapshot cards
         - Time-series chart
-        - Change mode: Level / Month-over-Month / Year-over-Year (approx)
-        - Indicator comparison: CPI vs IIP vs GDP (normalized to 100)
+        - Change mode: Level / Change vs previous year
+        - Indicator comparison: pairs normalized to 100
     3) 💹 Markets:
         - Live index snapshot (Nifty 50, Sensex, S&P 500, NASDAQ)
         - Watchlist: choose from Nifty & Sensex companies + custom tickers
@@ -83,19 +83,27 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Health–dashboard style neon palette
 COLORS = {
-    "bg_top": "#020617",
-    "bg_bottom": "#020617",
-    "card": "#020617",
-    "card_inner": "#0B1220",
-    "border": "#1D283A",
-    "accent": "#F97316",       # orange
-    "accent2": "#22D3EE",      # cyan
+    # Background gradient
+    "bg_top": "#050816",      # deep navy-purple
+    "bg_bottom": "#02010A",   # almost black
+
+    # Card surfaces
+    "card": "#050816",
+    "card_inner": "#0B1020",
+    "border": "rgba(255, 255, 255, 0.06)",
+
+    # Neon accents
+    "accent": "#FF7A3C",      # warm orange
+    "accent2": "#A855F7",     # violet / magenta
+
+    # Text & status
     "text": "#F9FAFB",
     "muted": "#9CA3AF",
     "pos": "#22C55E",
-    "neg": "#EF4444",
-    "neu": "#EAB308",
+    "neg": "#F97373",
+    "neu": "#FBBF24",
 }
 
 INDEX_SYMBOLS = {
@@ -106,10 +114,6 @@ INDEX_SYMBOLS = {
 }
 
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "").strip()
-DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY", "").strip()
-CPI_RESOURCE_ID = os.getenv("CPI_RESOURCE_ID", "").strip()
-IIP_RESOURCE_ID = os.getenv("IIP_RESOURCE_ID", "").strip()
-GDP_RESOURCE_ID = os.getenv("GDP_RESOURCE_ID", "").strip()
 
 NEWS_TTL = 120
 MARKET_TTL = 30
@@ -128,50 +132,66 @@ if "news_query" not in st.session_state:
 st.markdown(
     f"""
 <style>
+/* App background: dark neon with orange / violet glow */
 [data-testid="stAppViewContainer"] {{
-    background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%);
+    background:
+        radial-gradient(circle at 0% 0%, rgba(255,122,60,0.20), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(168,85,247,0.20), transparent 55%),
+        linear-gradient(180deg, {COLORS['bg_top']} 0%, {COLORS['bg_bottom']} 100%);
     color: {COLORS['text']};
 }}
+
 h1, h2, h3, h4 {{
     color: {COLORS['text']};
     font-weight: 700;
 }}
+
 .card {{
-    background: {COLORS['card_inner']};
-    border-radius: 14px;
-    padding: 0.9rem 1rem;
+    background: radial-gradient(circle at top left, rgba(255,255,255,0.03), transparent 55%),
+                linear-gradient(145deg, #050816 0%, #0B1020 50%, #020617 100%);
+    border-radius: 18px;
+    padding: 0.9rem 1.1rem;
     margin-bottom: 0.9rem;
     border: 1px solid {COLORS['border']};
-    box-shadow: 0 16px 32px rgba(15,23,42,0.7);
+    box-shadow:
+        0 22px 55px rgba(0,0,0,0.85),
+        0 0 0 1px rgba(15,23,42,0.6);
 }}
+
 .small-muted {{
     color: {COLORS['muted']};
     font-size: 0.85rem;
 }}
+
 .chip {{
     display:inline-block;
-    padding:2px 8px;
+    padding:2px 10px;
     border-radius:999px;
-    border:1px solid {COLORS['border']};
+    border:1px solid rgba(148,163,184,0.5);
     font-size:0.7rem;
     margin-right:4px;
     margin-bottom:4px;
+    background:rgba(15,23,42,0.9);
 }}
+
 .sent-pill {{
     display:inline-block;
-    padding:2px 10px;
+    padding:3px 12px;
     border-radius:999px;
     font-size:0.7rem;
     font-weight:600;
     color:black;
+    box-shadow:0 0 16px rgba(0,0,0,0.4);
 }}
+
 .skeleton {{
     height: 16px;
     border-radius: 999px;
-    background: linear-gradient(90deg, #1f2937, #111827, #1f2937);
+    background: linear-gradient(90deg, #111827, #020617, #111827);
     background-size: 200% 100%;
     animation: shimmer 1.2s infinite linear;
 }}
+
 @keyframes shimmer {{
     from {{ background-position: -200% 0; }}
     to   {{ background-position:  200% 0; }}
@@ -237,7 +257,6 @@ def load_preset_tickers() -> dict:
     CSV format:
         name,symbol,index
         Reliance Industries,RELIANCE.NS,NIFTY;SENSEX
-        HDFC Bank,HDFCBANK.NS,NIFTY;SENSEX
         ...
     """
     if os.path.exists(TICKERS_CSV_PATH):
@@ -648,298 +667,273 @@ def news_tab(headline_count: int):
 
 
 # ------------------------------------------------------------------
-#                       MACRO INDICATORS
+#                       MACRO INDICATORS (WORLD BANK)
 # ------------------------------------------------------------------
 
+# World Bank India indicator codes
+WB_CODES = {
+    "CPI": "FP.CPI.TOTL.ZG",           # Inflation, consumer prices (annual %)
+    "GDP": "NY.GDP.MKTP.KD.ZG",        # GDP growth (annual %)
+    "MANUF": "NV.IND.MANF.KD.ZG",      # Manufacturing value added growth (proxy for IIP)
+    "UNEMP": "SL.UEM.TOTL.ZS",         # Unemployment, total (% of labour force)
+}
+
+
 @st.cache_data(ttl=MACRO_TTL)
-def fetch_data_gov(resource_id: str, limit: int = 500) -> pd.DataFrame | None:
-    if not resource_id or not DATA_GOV_API_KEY:
-        return None
-    try:
-        js = safe_json_get(
-            f"https://api.data.gov.in/resource/{resource_id}.json",
-            params={"api-key": DATA_GOV_API_KEY, "limit": limit},
+def fetch_wb_indicator(code: str, max_years: int = 60) -> pd.DataFrame:
+    """Fetch a World Bank indicator for India and return df[year, value]."""
+    url = f"https://api.worldbank.org/v2/country/IND/indicator/{code}"
+    js = safe_json_get(url, params={"format": "json", "per_page": max_years})
+    if not js or len(js) < 2 or js[1] is None:
+        return pd.DataFrame(columns=["year", "value"])
+
+    rows = []
+    for item in js[1]:
+        rows.append(
+            {
+                "year": item.get("date"),
+                "value": item.get("value"),
+            }
         )
-        if not js or not js.get("records"):
-            return None
-        return pd.DataFrame(js["records"])
-    except Exception as e:
-        log(f"data.gov error {resource_id}: {e}")
-        return None
+    df = pd.DataFrame(rows)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["year", "value"]).sort_values("year")
+    return df
 
 
-def detect_date_value_cols(df: pd.DataFrame) -> Tuple[str, str]:
-    cols = list(df.columns)
-    date_col = next(
-        (c for c in cols if any(x in c.lower() for x in ["date", "month", "year", "quarter"])),
-        cols[0],
-    )
-    value_col = next(
-        (
-            c
-            for c in cols
-            if any(
-                x in c.lower()
-                for x in [
-                    "value",
-                    "index",
-                    "cpi",
-                    "iip",
-                    "gdp",
-                    "rate",
-                    "percent",
-                    "%",
-                    "growth",
-                ]
-            )
-        ),
-        cols[1] if len(cols) > 1 else cols[0],
-    )
-    return date_col, value_col
-
-
-def latest_value(df: pd.DataFrame | None) -> Tuple[Any, Any]:
+def latest_from_df(df: pd.DataFrame):
+    """Return (latest_value, latest_year) from df[year, value]."""
     if df is None or df.empty:
         return None, None
-    try:
-        date_col, val_col = detect_date_value_cols(df)
-        tmp = df.copy()
-        tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
-        tmp = tmp.dropna(subset=[date_col])
-        row = tmp.sort_values(date_col).iloc[-1]
-        return row[val_col], row[date_col]
-    except Exception as e:
-        log(f"latest_value error: {e}")
-        return None, None
+    tmp = df.dropna(subset=["value"]).sort_values("year")
+    row = tmp.iloc[-1]
+    return float(row["value"]), int(row["year"])
 
 
-def compute_change_series(
-    df: pd.DataFrame, mode: str
-) -> Tuple[pd.DataFrame, str, str]:
+def normalise_year_value(df: pd.DataFrame | None) -> pd.DataFrame:
     """
-    Return (df_with_change, x_col, y_col) for plotting, based on change mode:
-    - 'Level' → raw value
-    - 'MoM %' → month-over-month percentage change
-    - 'YoY %' → year-over-year percentage change (approx 12-period lag)
+    For uploaded CSV/XLSX:
+    - first column -> year
+    - second numeric column -> value
+    Returns clean df[year, value].
     """
-    date_col, val_col = detect_date_value_cols(df)
-    tmp = df.copy()
-    tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
-    tmp[val_col] = pd.to_numeric(tmp[val_col], errors="coerce")
-    tmp = tmp.dropna(subset=[date_col, val_col]).sort_values(date_col)
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["year", "value"])
 
-    if mode == "Level":
-        return tmp[[date_col, val_col]].copy(), date_col, val_col
+    out = df.copy()
+    cols = list(out.columns)
 
-    tmp = tmp.set_index(date_col).sort_index()
-    if mode == "MoM %":
-        ser = tmp[val_col].pct_change() * 100
-        out = ser.dropna().reset_index()
-        out.columns = [date_col, "MoM_change"]
-        return out, date_col, "MoM_change"
+    # year column
+    if "year" not in out.columns:
+        year_col = cols[0]
+        out.rename(columns={year_col: "year"}, inplace=True)
 
-    if mode == "YoY %":
-        # assume monthly-ish frequency, 12-period lag
-        ser = tmp[val_col].pct_change(periods=12) * 100
-        out = ser.dropna().reset_index()
-        out.columns = [date_col, "YoY_change"]
-        return out, date_col, "YoY_change"
+    # value column
+    if "value" not in out.columns:
+        val_col = None
+        for c in cols[1:]:
+            if pd.api.types.is_numeric_dtype(out[c]):
+                val_col = c
+                break
+        if val_col is None and len(cols) > 1:
+            val_col = cols[1]
+        elif val_col is None:
+            val_col = cols[0]
+        out.rename(columns={val_col: "value"}, inplace=True)
 
-    # fallback
-    return tmp[[date_col, val_col]].copy(), date_col, val_col
+    out["year"] = pd.to_numeric(out["year"], errors="coerce")
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    out = out.dropna(subset=["year", "value"]).sort_values("year")
+    return out[["year", "value"]]
 
 
 def macro_tab():
     st.subheader("📊 India macro indicators")
 
-    # Admin uploads
+    # ---------- Upload fallback (optional) ----------
     with st.expander("Upload fallback files (optional)"):
         c1, c2 = st.columns(2)
         with c1:
-            up_cpi = st.file_uploader("CPI", type=["csv", "xlsx", "pdf"])
-            up_iip = st.file_uploader("IIP", type=["csv", "xlsx", "pdf"])
+            up_cpi = st.file_uploader("CPI (inflation)", type=["csv", "xlsx"])
+            up_iip = st.file_uploader("IIP / manufacturing output", type=["csv", "xlsx"])
         with c2:
-            up_gdp = st.file_uploader("GDP", type=["csv", "xlsx", "pdf"])
-            up_unemp = st.file_uploader("Unemployment", type=["csv", "xlsx", "pdf"])
+            up_gdp = st.file_uploader("GDP", type=["csv", "xlsx"])
+            up_unemp = st.file_uploader("Unemployment", type=["csv", "xlsx"])
 
-    # Remote data
-    cpi_remote = fetch_data_gov(CPI_RESOURCE_ID) if CPI_RESOURCE_ID else None
-    iip_remote = fetch_data_gov(IIP_RESOURCE_ID) if IIP_RESOURCE_ID else None
-    gdp_remote = fetch_data_gov(GDP_RESOURCE_ID) if GDP_RESOURCE_ID else None
-
-    # Uploaded
-    cpi_up = read_table_or_text(up_cpi) if up_cpi else None
-    iip_up = read_table_or_text(up_iip) if up_iip else None
-    gdp_up = read_table_or_text(up_gdp) if up_gdp else None
-    unemp_up = read_table_or_text(up_unemp) if up_unemp else None
-
-    # Use remote if DataFrame, else uploaded DataFrame
-    cpi_df = cpi_remote if isinstance(cpi_remote, pd.DataFrame) else (
-        cpi_up if isinstance(cpi_up, pd.DataFrame) else None
-    )
-    iip_df = iip_remote if isinstance(iip_remote, pd.DataFrame) else (
-        iip_up if isinstance(iip_up, pd.DataFrame) else None
-    )
-    gdp_df = gdp_remote if isinstance(gdp_remote, pd.DataFrame) else (
-        gdp_up if isinstance(gdp_up, pd.DataFrame) else None
+    st.caption(
+        "Default data source: World Bank World Development Indicators (no API key needed). "
+        "If you upload CSV/XLSX, that will override World Bank data for that indicator."
     )
 
-    # snapshot row
-    cpi_val, cpi_dt = latest_value(cpi_df)
-    iip_val, iip_dt = latest_value(iip_df)
-    gdp_val, gdp_dt = latest_value(gdp_df)
+    # ---------- World Bank defaults ----------
+    with st.spinner("Fetching macro data from World Bank..."):
+        cpi_df_wb = fetch_wb_indicator(WB_CODES["CPI"])
+        gdp_df_wb = fetch_wb_indicator(WB_CODES["GDP"])
+        iip_df_wb = fetch_wb_indicator(WB_CODES["MANUF"])
+        unemp_df_wb = fetch_wb_indicator(WB_CODES["UNEMP"])
+
+    def choose_df(uploaded, wb_df):
+        if uploaded is None:
+            return wb_df
+        obj = read_table_or_text(uploaded)
+        if isinstance(obj, pd.DataFrame):
+            return normalise_year_value(obj)
+        return wb_df
+
+    cpi_df = choose_df(up_cpi, cpi_df_wb)
+    iip_df = choose_df(up_iip, iip_df_wb)
+    gdp_df = choose_df(up_gdp, gdp_df_wb)
+    unemp_df = choose_df(up_unemp, unemp_df_wb)
+
+    # ---------- Snapshot cards ----------
+    cpi_val, cpi_year = latest_from_df(cpi_df)
+    iip_val, iip_year = latest_from_df(iip_df)
+    gdp_val, gdp_year = latest_from_df(gdp_df)
+    u_val, u_year = latest_from_df(unemp_df)
 
     cards = st.columns(4)
-    snap_items = [
-        ("CPI (inflation)", "📊", cpi_val, cpi_dt),
-        ("IIP (industrial output)", "🏭", iip_val, iip_dt),
-        ("GDP (growth)", "💹", gdp_val, gdp_dt),
-        ("Unemployment (uploaded)", "👷", None, None),
-    ]
-    for col, (label, icon, val, dt) in zip(cards, snap_items):
-        if isinstance(val, (int, float, np.floating)):
-            try:
-                disp = f"{float(val):.1f}"
-            except Exception:
-                disp = str(val)
+
+    def macro_card(col, emoji, label, value, year):
+        if isinstance(value, (int, float, np.floating)):
+            disp = f"{value:.1f}"
         else:
             disp = "N/A"
-        date_txt = str(pd.to_datetime(dt).date()) if dt is not None else "Latest"
+        yr = str(year) if year is not None else "Latest"
         col.markdown(
             f"""
             <div class="card" style="text-align:center;">
-              <div style="font-size:2rem;">{icon}</div>
+              <div style="font-size:2rem;">{emoji}</div>
               <div style="font-size:1.8rem; color:{COLORS['accent']}; font-weight:700;">{disp}</div>
               <div style="font-size:0.9rem; font-weight:600;">{label}</div>
-              <div class="small-muted">{date_txt}</div>
+              <div class="small-muted">{yr}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
+    macro_card(cards[0], "📊", "CPI inflation (%)", cpi_val, cpi_year)
+    macro_card(cards[1], "🏭", "Manufacturing growth (%)", iip_val, iip_year)
+    macro_card(cards[2], "💹", "GDP growth (%)", gdp_val, gdp_year)
+    macro_card(cards[3], "👷", "Unemployment (%)", u_val, u_year)
+
     st.markdown("---")
 
-    # Detailed panel – indicator selector + change mode
+    # ---------- Detailed explorer ----------
+    indicator_map = {
+        "CPI": {
+            "df": cpi_df,
+            "desc": "Inflation, consumer prices (annual %, code FP.CPI.TOTL.ZG)",
+        },
+        "Manufacturing (IIP proxy)": {
+            "df": iip_df,
+            "desc": "Manufacturing value added, annual % growth – proxy for IIP (NV.IND.MANF.KD.ZG)",
+        },
+        "GDP": {
+            "df": gdp_df,
+            "desc": "GDP growth (annual %, constant prices – NY.GDP.MKTP.KD.ZG)",
+        },
+        "Unemployment": {
+            "df": unemp_df,
+            "desc": "Unemployment, total (% of labour force – SL.UEM.TOTL.ZS)",
+        },
+    }
+
     top_cols = st.columns([2, 2, 2])
     with top_cols[0]:
-        indicator = st.selectbox(
-            "Indicator",
-            ["CPI", "IIP", "GDP", "Unemployment"],
-        )
+        indicator = st.selectbox("Indicator", list(indicator_map.keys()))
     with top_cols[1]:
-        change_mode = st.selectbox(
+        mode = st.selectbox(
             "Display mode",
-            ["Level", "MoM %", "YoY %"],
+            ["Level", "Change vs previous year"],
             index=0,
         )
     with top_cols[2]:
-        st.caption("Indicator comparison (normalized index)")
-        compare_option = st.selectbox(
-            "Compare",
-            ["None", "CPI vs IIP", "CPI vs GDP", "IIP vs GDP"],
+        compare_opt = st.selectbox(
+            "Compare (normalized index)",
+            ["None", "CPI vs Manufacturing", "CPI vs GDP", "Manufacturing vs GDP"],
         )
 
-    # Main indicator
-    if indicator == "CPI":
-        df = cpi_df
-        desc = "Consumer Price Index (price-level changes)"
-    elif indicator == "IIP":
-        df = iip_df
-        desc = "Index of Industrial Production (output of core sectors)"
-    elif indicator == "GDP":
-        df = gdp_df
-        desc = "Gross Domestic Product – growth over time"
-    else:
-        # unemployment only from upload
-        df = unemp_up if isinstance(unemp_up, pd.DataFrame) else None
-        desc = "Unemployment rate (custom upload)"
-
-    st.markdown(f"**{indicator}** – {desc}")
+    info = indicator_map[indicator]
+    df = info["df"]
+    st.caption(info["desc"])
 
     if df is None or df.empty:
-        if isinstance(unemp_up, str) and indicator == "Unemployment":
-            st.text_area("Unemployment PDF preview", unemp_up[:2500])
-        else:
-            st.info("No structured data available for this indicator yet.")
+        st.info("No data available for this indicator.")
     else:
-        try:
-            series_df, x_col, y_col = compute_change_series(df, change_mode)
+        plot_df = df.copy()
+        if mode == "Level":
+            ycol = "value"
+            title_suffix = ""
+        else:
+            plot_df["change"] = plot_df["value"].diff()
+            ycol = "change"
+            title_suffix = " – change vs previous year"
+
+        if plot_df.empty:
+            st.info("Not enough data to plot.")
+        else:
             fig = px.line(
-                series_df,
-                x=x_col,
-                y=y_col,
+                plot_df,
+                x="year",
+                y=ycol,
                 markers=True,
-                title=f"{indicator} – {change_mode}",
+                title=f"{indicator} {title_suffix}",
             )
-            fig.update_layout(template="plotly_dark", height=420)
+            fig.update_layout(
+                template="plotly_dark",
+                height=420,
+                xaxis_title="Year",
+                yaxis_title="Value (%)",
+            )
             st.plotly_chart(fig, use_container_width=True)
 
-            st.caption(f"Detected columns → date: `{x_col}` · value: `{y_col}`")
-
-            with st.expander("Raw data preview"):
-                st.dataframe(series_df.tail(20))
-        except Exception as e:
-            st.warning(f"Could not plot time-series: {e}")
+            with st.expander("Raw data (tail)"):
+                st.dataframe(plot_df.tail(15))
 
     st.markdown("---")
 
-    # Comparison chart: normalized index = 100
-    if compare_option != "None":
-        mapping = {
-            "CPI": cpi_df,
-            "IIP": iip_df,
-            "GDP": gdp_df,
+    # ---------- Comparison chart (normalized to 100) ----------
+    if compare_opt != "None":
+        pairs = {
+            "CPI vs Manufacturing": ("CPI", "Manufacturing (IIP proxy)"),
+            "CPI vs GDP": ("CPI", "GDP"),
+            "Manufacturing vs GDP": ("Manufacturing (IIP proxy)", "GDP"),
         }
-        if compare_option == "CPI vs IIP":
-            a, b = "CPI", "IIP"
-        elif compare_option == "CPI vs GDP":
-            a, b = "CPI", "GDP"
+        a_key, b_key = pairs[compare_opt]
+        df_a = indicator_map[a_key]["df"]
+        df_b = indicator_map[b_key]["df"]
+
+        if df_a is None or df_a.empty or df_b is None or df_b.empty:
+            st.info("Not enough data for comparison.")
         else:
-            a, b = "IIP", "GDP"
+            ja = normalise_year_value(df_a)
+            jb = normalise_year_value(df_b)
 
-        df_a = mapping.get(a)
-        df_b = mapping.get(b)
+            joined = ja.merge(jb, on="year", how="inner", suffixes=("_a", "_b"))
+            if joined.empty:
+                st.info("No overlapping years to compare.")
+            else:
+                base_a = joined["value_a"].iloc[0]
+                base_b = joined["value_b"].iloc[0]
+                joined[f"{a_key}_idx"] = joined["value_a"] / base_a * 100
+                joined[f"{b_key}_idx"] = joined["value_b"] / base_b * 100
 
-        if df_a is None or df_b is None:
-            st.info("Not enough data available for comparison.")
-        else:
-            try:
-                da = df_a.copy()
-                db = df_b.copy()
-                ac, av = detect_date_value_cols(da)
-                bc, bv = detect_date_value_cols(db)
-
-                da[ac] = pd.to_datetime(da[ac], errors="coerce")
-                da[av] = pd.to_numeric(da[av], errors="coerce")
-                da = da.dropna(subset=[ac, av]).sort_values(ac)
-
-                db[bc] = pd.to_datetime(db[bc], errors="coerce")
-                db[bv] = pd.to_numeric(db[bv], errors="coerce")
-                db = db.dropna(subset=[bc, bv]).sort_values(bc)
-
-                da = da.set_index(ac)
-                db = db.set_index(bc)
-
-                joined = da[[av]].join(db[[bv]], how="inner", lsuffix=f"_{a}", rsuffix=f"_{b}")
-                joined = joined.dropna()
-
-                base_a = joined[av].iloc[0]
-                base_b = joined[bv].iloc[0]
-                joined[f"{a}_idx"] = joined[av] / base_a * 100
-                joined[f"{b}_idx"] = joined[bv] / base_b * 100
-
-                plot_df = joined[[f"{a}_idx", f"{b}_idx"]].reset_index().rename(columns={joined.index.name or "index": "date"})
+                plot_df = joined[["year", f"{a_key}_idx", f"{b_key}_idx"]]
 
                 fig_cmp = px.line(
                     plot_df,
-                    x="date",
-                    y=[f"{a}_idx", f"{b}_idx"],
-                    title=f"{a} vs {b} (normalized to 100)",
+                    x="year",
+                    y=[f"{a_key}_idx", f"{b_key}_idx"],
+                    title=f"{compare_opt} (index, base year = 100)",
                 )
-                fig_cmp.update_layout(template="plotly_dark", height=420)
+                fig_cmp.update_layout(
+                    template="plotly_dark",
+                    height=420,
+                    xaxis_title="Year",
+                    yaxis_title="Index (100 = first year)",
+                )
                 st.plotly_chart(fig_cmp, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not compute comparison chart: {e}")
 
 
 # ------------------------------------------------------------------
@@ -1257,7 +1251,7 @@ def main():
         f"""
         <h1>India Macro & Markets Monitor</h1>
         <div class="small-muted">
-          Dark dashboard for economic news, macro indicators and equity markets.
+          Dark neon dashboard for economic news, macro indicators and equity markets.
         </div>
         """,
         unsafe_allow_html=True,
