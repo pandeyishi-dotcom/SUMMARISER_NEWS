@@ -1,0 +1,12 @@
+PyPDF2
+streamlit>=1.18
+pandas>=1.5
+numpy
+yfinance>=0.2.50
+plotly
+requests
+requests-cache
+feedparser
+textblob
+python-dotenv
+streamlit-autorefresh
