@@ -2,9 +2,9 @@
 India Macro & Markets Monitor (Ultimate Edition)
 
 Features:
-1. Database: Pre-loaded Nifty 100 + Key Indices.
-2. Technicals: RSI, Bollinger Bands, Moving Averages (Crash-Proof).
-3. News: Google News Feed with AI Summary & Sentiment.
+1. Finshots Brief: Daily 3-minute newsletter style summaries.
+2. Stock Universe: Pre-loaded Nifty 100 + Global Indices.
+3. Technicals: RSI, Bollinger Bands, Moving Averages (Crash-Proof).
 4. Macro: Heatmap, Recession Flags.
 5. Portfolio: Sector Allocation, P/L Tracker.
 6. Simulator: Monte Carlo Future Prediction.
@@ -136,12 +136,14 @@ THEMES = {
     "Dark Neon": {
         "bg": "#0e1117", "card": "#1a1d24", "text": "#ffffff",
         "accent": "#00d4ff", "pos": "#00ff9d", "neg": "#ff4b4b",
-        "chart_template": "plotly_dark"
+        "chart_template": "plotly_dark",
+        "finshot_bg": "#262730"
     },
     "Light Pro": {
         "bg": "#ffffff", "card": "#f0f2f6", "text": "#000000",
         "accent": "#2962ff", "pos": "#008000", "neg": "#d50000",
-        "chart_template": "plotly_white"
+        "chart_template": "plotly_white",
+        "finshot_bg": "#f9f9f9"
     }
 }
 
@@ -158,6 +160,14 @@ st.markdown(f"""
     .news-card {{
         background-color: {current_theme['card']}; padding: 15px; border-radius: 8px;
         margin-bottom: 12px; border: 1px solid rgba(128,128,128,0.2);
+    }}
+    .finshot-card {{
+        background-color: {current_theme['finshot_bg']};
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        border-left: 5px solid {current_theme['accent']};
+        font-family: 'Georgia', sans-serif;
     }}
     .tag {{
         display: inline-block; padding: 2px 8px; border-radius: 12px;
@@ -199,7 +209,6 @@ def fetch_google_news(query, min_impact):
         articles = []
         for entry in feed.entries[:15]:
             title = entry.title
-            # Simple impact logic
             impact = 30
             if "market" in title.lower(): impact += 10
             if "crash" in title.lower() or "surge" in title.lower(): impact += 30
@@ -217,49 +226,88 @@ def fetch_google_news(query, min_impact):
     except:
         return []
 
+def generate_finshots_story(title):
+    """
+    Simulates a 'Finshots' style 3-minute read breakdown.
+    """
+    title_lower = title.lower()
+    hook = "Here is what's happening."
+    why = "Markets are reacting to new information."
+    takeaway = "Keep an eye on volatility."
+    
+    if "inflation" in title_lower:
+        hook = "Prices are creeping up again, and the central bank is watching closely."
+        why = "When inflation rises, your money buys less, and interest rates usually go up."
+        takeaway = "Expect loan EMIs to potentially get expensive."
+    elif "profit" in title_lower or "q3" in title_lower or "q4" in title_lower:
+        hook = "Earnings season is here, and the numbers are doing the talking."
+        why = "Profit jumps usually mean stock prices rally, while misses can lead to a sell-off."
+        takeaway = "Check if the growth is coming from core business or one-time gains."
+    elif "rbi" in title_lower or "rate" in title_lower:
+        hook = "The RBI is making moves to control the money supply."
+        why = "This decision affects everything from your FD returns to home loan rates."
+        takeaway = "Banking stocks usually react first to these announcements."
+    elif "ipo" in title_lower:
+        hook = "A new company is hitting the dalal street."
+        why = "IPOs can offer quick listing gains, but valuations are key."
+        takeaway = "Don't just go by the hype; look at the fundamentals."
+        
+    return hook, why, takeaway
+
 # ------------------------------------------------------------------
 # 5. MAIN APP LAYOUT
 # ------------------------------------------------------------------
 
 tab_news, tab_macro, tab_markets, tab_port, tab_sim = st.tabs([
-    "📰 News Pro", "📊 Macro Lab", "💹 Technicals", "💼 Portfolio", "🎲 Monte Carlo"
+    "☕ Finshots Brief", "📊 Macro Lab", "💹 Technicals", "💼 Portfolio", "🎲 Monte Carlo"
 ])
 
 # ==========================================
-# TAB 1: NEWS PRO
+# TAB 1: FINSHOTS BRIEF (New Feature)
 # ==========================================
 with tab_news:
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        query = st.text_input("Topic Search", "India Stock Market")
-        impact_thresh = st.slider("Min Impact Score", 0, 100, 30)
-        articles = fetch_google_news(query, impact_thresh)
+    col_main, col_side = st.columns([2, 1])
+    
+    with col_main:
+        st.subheader("Daily Insights ☕")
+        st.caption("3-minute reads on the top stories today.")
+        
+        query = st.text_input("Topic Search", "India Stock Market", key="news_search")
+        articles = fetch_google_news(query, 30)
         
         if articles:
-            for art in articles:
-                blob = TextBlob(art['title'])
-                sent_color = current_theme['pos'] if blob.sentiment.polarity > 0 else current_theme['neg']
+            for art in articles[:5]: # Show top 5 in Finshots style
+                hook, why, takeaway = generate_finshots_story(art['title'])
+                
                 st.markdown(f"""
-                <div class="news-card" style="border-left: 4px solid {sent_color};">
-                    <a href="{art['link']}" target="_blank" style="color:{current_theme['text']}; font-weight:bold; text-decoration:none;">{art['title']}</a>
-                    <br><small style="color:gray;">{art['source']} | Impact: {art['impact']}</small>
+                <div class="finshot-card">
+                    <h3 style="margin-bottom: 5px;">{art['title']}</h3>
+                    <p style="font-size: 0.9em; color: gray;">Source: {art['source']} • 3 min read</p>
+                    <hr style="opacity: 0.2">
+                    <p><b>🧐 The Story:</b> {hook}</p>
+                    <p><b>📉 Why it Matters:</b> {why}</p>
+                    <p><b>🚀 The Takeaway:</b> {takeaway}</p>
+                    <a href="{art['link']}" target="_blank" style="text-decoration: none; color: {current_theme['accent']}; font-weight: bold;">Read Full Article →</a>
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.info("No news found. Check connection or lower impact score.")
+            st.info("No news found. Check connection.")
 
-    with c2:
-        st.subheader("Word Cloud")
+    with col_side:
+        st.subheader("Trending Now ☁️")
         if articles:
             text = " ".join([a['title'] for a in articles]).lower()
             words = re.findall(r'\w+', text)
-            stop_words = ["to", "in", "for", "on", "of", "the", "and", "a", "at", "is", "india", "market", "stocks"]
+            stop_words = ["to", "in", "for", "on", "of", "the", "and", "a", "at", "is", "india", "market", "stocks", "share", "price"]
             filtered = [w for w in words if w not in stop_words and len(w) > 3]
             cnt = Counter(filtered).most_common(10)
             
             df_cloud = pd.DataFrame(cnt, columns=["Word", "Count"])
             fig = px.bar(df_cloud, x="Count", y="Word", orientation='h', template=current_theme['chart_template'])
             st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("---")
+            st.info("💡 **Did you know?** You can toggle the 'Analyst Bot' in the sidebar to ask questions about these terms!")
 
 # ==========================================
 # TAB 2: MACRO LAB
@@ -325,10 +373,7 @@ with tab_markets:
                     df['Lower'] = df['SMA20'] - (df['Close'].rolling(20).std() * 2)
                     df['RSI'] = calculate_rsi(df['Close'])
                     
-                    # 1. Price Chart with Bollinger Bands 
-
-[Image of Bollinger Bands]
-
+                    # 1. Price Chart with Bollinger Bands
                     fig_p = go.Figure()
                     fig_p.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color=current_theme['accent'], width=2)))
                     fig_p.add_trace(go.Scatter(x=df.index, y=df['Upper'], name='Upper BB', line=dict(color='gray', dash='dash')))
@@ -336,10 +381,7 @@ with tab_markets:
                     fig_p.update_layout(title=f"{selected_ticker} Price Analysis", template=current_theme['chart_template'], height=500, hovermode="x unified")
                     st.plotly_chart(fig_p, use_container_width=True)
                     
-                    # 2. RSI Chart 
-
-[Image of RSI Indicator]
-
+                    # 2. RSI Chart
                     fig_r = go.Figure()
                     fig_r.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI', line=dict(color='orange')))
                     fig_r.add_hline(y=70, line_dash="dot", line_color="red")
