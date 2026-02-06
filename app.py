@@ -1,5 +1,5 @@
 # ============================================================
-# INDIA MACRO & MARKETS MONITOR — FINAL STABLE VERSION
+# INDIA MACRO & MARKETS MONITOR — FINAL HARDENED BUILD
 # ============================================================
 
 import streamlit as st
@@ -75,14 +75,20 @@ st.markdown(f"""
 # ------------------------------------------------------------
 # HELPERS
 # ------------------------------------------------------------
-def calculate_rsi(series, period=14):
+def normalize_yfinance_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Flatten yfinance MultiIndex columns safely."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    return df
+
+def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
     loss = -delta.clip(upper=0).rolling(period).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def detect_market_regime(df):
+def detect_market_regime(df: pd.DataFrame) -> str:
     if df is None or df.empty or "Close" not in df:
         return "Data Unavailable"
 
@@ -119,7 +125,7 @@ def detect_market_regime(df):
     else:
         return "Risk-Off 📉"
 
-def monte_carlo(start, mu, sigma, days=30, sims=50):
+def monte_carlo(start: float, mu: float, sigma: float, days: int = 30, sims: int = 50) -> pd.DataFrame:
     paths = pd.DataFrame()
     for i in range(sims):
         prices = [start]
@@ -169,6 +175,8 @@ with tab_news:
 # ============================================================
 with tab_macro:
     nifty = yf.download("^NSEI", period="1y", progress=False)
+    nifty = normalize_yfinance_df(nifty)
+
     regime = detect_market_regime(nifty)
 
     c1, c2, c3 = st.columns(3)
@@ -184,8 +192,9 @@ with tab_macro:
 with tab_tech:
     symbol = st.text_input("Stock Symbol", "RELIANCE.NS")
     df = yf.download(symbol, period="1y", progress=False)
+    df = normalize_yfinance_df(df)
 
-    if not df.empty:
+    if not df.empty and "Close" in df:
         df["RSI"] = calculate_rsi(df["Close"])
         df["SMA"] = df["Close"].rolling(20).mean()
         df["Upper"] = df["SMA"] + 2 * df["Close"].rolling(20).std()
@@ -199,6 +208,8 @@ with tab_tech:
         st.plotly_chart(fig, use_container_width=True)
 
         st.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}")
+    else:
+        st.warning("Price data unavailable.")
 
 # ============================================================
 # TAB 4 — PORTFOLIO
@@ -218,28 +229,34 @@ with tab_port:
 
     if st.session_state["portfolio"]:
         pf = pd.DataFrame(st.session_state["portfolio"])
-        prices = yf.download(pf["symbol"].tolist(), period="1d", progress=False)["Close"]
 
-        pf["LTP"] = pf["symbol"].apply(lambda x: float(prices[x].iloc[-1]))
-        pf["Value"] = pf["LTP"] * pf["qty"]
-        pf["Invested"] = pf["avg"] * pf["qty"]
-        pf["P/L"] = pf["Value"] - pf["Invested"]
+        prices = yf.download(pf["symbol"].tolist(), period="1d", progress=False)
+        prices = normalize_yfinance_df(prices)
 
-        st.metric("Total P/L", f"₹{pf['P/L'].sum():,.0f}")
-        st.dataframe(pf, use_container_width=True)
+        if "Close" in prices:
+            close_px = prices["Close"]
+            pf["LTP"] = pf["symbol"].apply(lambda x: float(close_px[x].iloc[-1]))
+            pf["Value"] = pf["LTP"] * pf["qty"]
+            pf["Invested"] = pf["avg"] * pf["qty"]
+            pf["P/L"] = pf["Value"] - pf["Invested"]
 
-        fig = px.pie(pf, values="Value", names="sector", template=theme["template"])
-        st.plotly_chart(fig, use_container_width=True)
+            st.metric("Total P/L", f"₹{pf['P/L'].sum():,.0f}")
+            st.dataframe(pf, use_container_width=True)
+
+            fig = px.pie(pf, values="Value", names="sector", template=theme["template"])
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Portfolio price data unavailable.")
 
 # ============================================================
 # TAB 5 — MONTE CARLO
 # ============================================================
 with tab_sim:
-    if "df" in locals() and not df.empty:
+    if "df" in locals() and not df.empty and "Close" in df:
         if st.button("Run 30-Day Simulation"):
             returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
             sim = monte_carlo(
-                df["Close"].iloc[-1],
+                float(df["Close"].iloc[-1]),
                 float(returns.mean()),
                 float(returns.std())
             )
