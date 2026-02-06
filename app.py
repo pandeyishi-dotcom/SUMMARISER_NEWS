@@ -1,5 +1,5 @@
 # ============================================================
-# INDIA MACRO & MARKETS MONITOR — FINAL STABLE BUILD
+# INDIA MACRO & MARKETS MONITOR — FINAL STABLE VERSION
 # ============================================================
 
 import streamlit as st
@@ -30,16 +30,25 @@ if "theme" not in st.session_state:
 # ------------------------------------------------------------
 THEMES = {
     "Dark Neon": {
-        "bg": "#0e1117", "card": "#1a1d24", "text": "#ffffff",
-        "accent": "#00d4ff", "template": "plotly_dark"
+        "bg": "#0e1117",
+        "card": "#1a1d24",
+        "text": "#ffffff",
+        "accent": "#00d4ff",
+        "template": "plotly_dark"
     },
     "Bloomberg Terminal": {
-        "bg": "#000000", "card": "#111111", "text": "#ff9900",
-        "accent": "#ff9900", "template": "plotly_dark"
+        "bg": "#000000",
+        "card": "#111111",
+        "text": "#ff9900",
+        "accent": "#ff9900",
+        "template": "plotly_dark"
     },
     "Solarized Light": {
-        "bg": "#FDF6E3", "card": "#EEE8D5", "text": "#657B83",
-        "accent": "#B58900", "template": "plotly_white"
+        "bg": "#FDF6E3",
+        "card": "#EEE8D5",
+        "text": "#657B83",
+        "accent": "#B58900",
+        "template": "plotly_white"
     }
 }
 
@@ -50,12 +59,15 @@ theme = THEMES[st.session_state["theme"]]
 # ------------------------------------------------------------
 st.markdown(f"""
 <style>
-.stApp {{ background:{theme['bg']}; color:{theme['text']}; }}
+.stApp {{
+    background-color: {theme['bg']};
+    color: {theme['text']};
+}}
 .card {{
-    background:{theme['card']};
-    padding:16px;
-    border-radius:12px;
-    margin-bottom:14px;
+    background-color: {theme['card']};
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 14px;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -83,16 +95,22 @@ def detect_market_regime(df):
         return "Neutral (Low Liquidity)"
 
     vol = returns.rolling(20).std() * np.sqrt(252)
-    vol_latest = vol.dropna().iloc[-1]
-    vol_mean = vol.dropna().mean()
+    vol = vol.dropna()
+    if vol.empty:
+        return "Neutral (Vol Forming)"
+
+    vol_latest = float(vol.iloc[-1])
+    vol_mean = float(vol.mean())
 
     ma50 = close.rolling(50).mean().dropna()
     ma200 = close.rolling(200).mean().dropna()
-
     if ma50.empty or ma200.empty:
         return "Neutral (Trend Forming)"
 
-    trend = ma50.iloc[-1] - ma200.iloc[-1]
+    trend = float(ma50.iloc[-1] - ma200.iloc[-1])
+
+    if np.isnan(vol_latest) or np.isnan(vol_mean):
+        return "Neutral (Vol Data Gap)"
 
     if vol_latest > vol_mean * 1.2:
         return "High Volatility ⚠️"
@@ -106,7 +124,9 @@ def monte_carlo(start, mu, sigma, days=30, sims=50):
     for i in range(sims):
         prices = [start]
         for _ in range(days):
-            prices.append(prices[-1] * np.exp((mu - 0.5*sigma**2) + sigma*np.random.normal()))
+            prices.append(
+                prices[-1] * np.exp((mu - 0.5 * sigma**2) + sigma * np.random.normal())
+            )
         paths[i] = prices
     return paths
 
@@ -150,10 +170,12 @@ with tab_news:
 with tab_macro:
     nifty = yf.download("^NSEI", period="1y", progress=False)
     regime = detect_market_regime(nifty)
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Market Regime", regime)
     c2.metric("India 10Y Yield", "7.1%")
     c3.metric("USD/INR", "83.4")
+
     st.success("Macro → Sector View: High rates favor Banks | Pressure on Real Estate")
 
 # ============================================================
@@ -183,11 +205,12 @@ with tab_tech:
 # ============================================================
 with tab_port:
     with st.form("add_stock"):
-        s, q, a, sec = st.columns(4)
-        sym = s.text_input("Symbol")
-        qty = q.number_input("Qty", 1)
-        avg = a.number_input("Avg Price", 1.0)
-        sector = sec.selectbox("Sector", ["Banking","IT","Energy","FMCG","Auto","Other"])
+        c1, c2, c3, c4 = st.columns(4)
+        sym = c1.text_input("Symbol")
+        qty = c2.number_input("Qty", min_value=1)
+        avg = c3.number_input("Avg Price", min_value=1.0)
+        sector = c4.selectbox("Sector", ["Banking","IT","Energy","FMCG","Auto","Other"])
+
         if st.form_submit_button("Add"):
             st.session_state["portfolio"].append(
                 {"symbol": sym, "qty": qty, "avg": avg, "sector": sector}
@@ -212,10 +235,14 @@ with tab_port:
 # TAB 5 — MONTE CARLO
 # ============================================================
 with tab_sim:
-    if 'df' in locals() and not df.empty:
-        if st.button("Run Simulation"):
-            r = np.log(df["Close"]/df["Close"].shift(1)).dropna()
-            sim = monte_carlo(df["Close"].iloc[-1], r.mean(), r.std())
+    if "df" in locals() and not df.empty:
+        if st.button("Run 30-Day Simulation"):
+            returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
+            sim = monte_carlo(
+                df["Close"].iloc[-1],
+                float(returns.mean()),
+                float(returns.std())
+            )
             fig = px.line(sim, template=theme["template"])
             fig.update_layout(showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
@@ -226,9 +253,17 @@ with tab_sim:
 with st.sidebar:
     st.header("🤖 Analyst Bot")
     q = st.text_input("Ask a question")
+
     if q:
-        if "rsi" in q.lower():
-            st.info("RSI >70 Overbought | <30 Oversold")
+        ql = q.lower()
+        if "rsi" in ql:
+            st.info("RSI >70 = Overbought | <30 = Oversold")
+        elif "bull" in ql:
+            st.info("Bull market = rising prices with momentum.")
+        elif "bear" in ql:
+            st.info("Bear market = prolonged decline.")
         else:
             st.info("Ask about RSI, trends, macro, or risk.")
+
+    st.markdown("---")
     st.selectbox("Theme", THEMES.keys(), key="theme")
