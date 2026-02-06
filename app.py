@@ -1,5 +1,5 @@
 # ============================================================
-# INDIA MACRO & MARKETS MONITOR — STABLE PRO BUILD
+# INDIA MACRO & MARKETS MONITOR — FINAL STABLE BUILD
 # ============================================================
 
 import streamlit as st
@@ -71,12 +71,35 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def detect_market_regime(df):
-    ret = df["Close"].pct_change()
-    vol = ret.rolling(20).std() * np.sqrt(252)
-    trend = df["Close"].rolling(50).mean().iloc[-1] - df["Close"].rolling(200).mean().iloc[-1]
-    if vol.iloc[-1] > vol.mean():
+    if df is None or df.empty or "Close" not in df:
+        return "Data Unavailable"
+
+    close = df["Close"].dropna()
+    if len(close) < 200:
+        return "Neutral (Insufficient Data)"
+
+    returns = close.pct_change().dropna()
+    if len(returns) < 20:
+        return "Neutral (Low Liquidity)"
+
+    vol = returns.rolling(20).std() * np.sqrt(252)
+    vol_latest = vol.dropna().iloc[-1]
+    vol_mean = vol.dropna().mean()
+
+    ma50 = close.rolling(50).mean().dropna()
+    ma200 = close.rolling(200).mean().dropna()
+
+    if ma50.empty or ma200.empty:
+        return "Neutral (Trend Forming)"
+
+    trend = ma50.iloc[-1] - ma200.iloc[-1]
+
+    if vol_latest > vol_mean * 1.2:
         return "High Volatility ⚠️"
-    return "Risk-On 📈" if trend > 0 else "Risk-Off 📉"
+    elif trend > 0:
+        return "Risk-On 📈"
+    else:
+        return "Risk-Off 📉"
 
 def monte_carlo(start, mu, sigma, days=30, sims=50):
     paths = pd.DataFrame()
@@ -95,7 +118,7 @@ tab_news, tab_macro, tab_tech, tab_port, tab_sim = st.tabs(
 )
 
 # ============================================================
-# TAB 1 — FINSHOTS (FIXED RSS)
+# TAB 1 — FINSHOTS
 # ============================================================
 with tab_news:
     st.subheader("Daily Market Brief ☕")
@@ -107,39 +130,37 @@ with tab_news:
     try:
         feed = feedparser.parse(rss_url)
         if not feed.entries:
-            st.warning("No news available or RSS blocked.")
+            st.warning("No news available.")
         else:
             for entry in feed.entries[:5]:
                 st.markdown(f"""
                 <div class="card">
                     <b>{entry.title}</b><br>
                     <small>{entry.get("published","")}</small><br><br>
-                    🧠 <b>Why it matters:</b> Markets respond to liquidity, earnings, and policy signals.<br>
+                    Markets react to liquidity, earnings, and policy signals.<br>
                     <a href="{entry.link}" target="_blank">Read full article →</a>
                 </div>
                 """, unsafe_allow_html=True)
     except Exception:
-        st.error("News feed unavailable. Try again later.")
+        st.error("News feed unavailable.")
 
 # ============================================================
-# TAB 2 — MACRO LAB
+# TAB 2 — MACRO
 # ============================================================
 with tab_macro:
     nifty = yf.download("^NSEI", period="1y", progress=False)
     regime = detect_market_regime(nifty)
-
     c1, c2, c3 = st.columns(3)
     c1.metric("Market Regime", regime)
     c2.metric("India 10Y Yield", "7.1%")
     c3.metric("USD/INR", "83.4")
-
     st.success("Macro → Sector View: High rates favor Banks | Pressure on Real Estate")
 
 # ============================================================
 # TAB 3 — TECHNICALS
 # ============================================================
 with tab_tech:
-    symbol = st.text_input("Enter Stock Symbol", "RELIANCE.NS")
+    symbol = st.text_input("Stock Symbol", "RELIANCE.NS")
     df = yf.download(symbol, period="1y", progress=False)
 
     if not df.empty:
@@ -155,9 +176,7 @@ with tab_tech:
         fig.update_layout(template=theme["template"], height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-        c1, c2 = st.columns(2)
-        c1.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}")
-        c2.metric("6M Momentum (%)", f"{(df['Close'].iloc[-1]/df['Close'].iloc[-126]-1)*100:.2f}")
+        st.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}")
 
 # ============================================================
 # TAB 4 — PORTFOLIO
@@ -194,7 +213,7 @@ with tab_port:
 # ============================================================
 with tab_sim:
     if 'df' in locals() and not df.empty:
-        if st.button("Run 30-Day Simulation"):
+        if st.button("Run Simulation"):
             r = np.log(df["Close"]/df["Close"].shift(1)).dropna()
             sim = monte_carlo(df["Close"].iloc[-1], r.mean(), r.std())
             fig = px.line(sim, template=theme["template"])
@@ -208,15 +227,8 @@ with st.sidebar:
     st.header("🤖 Analyst Bot")
     q = st.text_input("Ask a question")
     if q:
-        ql = q.lower()
-        if "rsi" in ql:
-            st.info("RSI >70 = Overbought | <30 = Oversold")
-        elif "bull" in ql:
-            st.info("Bull market means rising prices with momentum.")
-        elif "bear" in ql:
-            st.info("Bear market means prolonged declines >20%.")
+        if "rsi" in q.lower():
+            st.info("RSI >70 Overbought | <30 Oversold")
         else:
-            st.info("I explain RSI, trends, macro & portfolio risk.")
-
-    st.markdown("---")
+            st.info("Ask about RSI, trends, macro, or risk.")
     st.selectbox("Theme", THEMES.keys(), key="theme")
